@@ -45,6 +45,11 @@ def db_seed():
 
     db.session.add(post)
 
+    vote = Vote(
+        resource_url="https://www.nbcnews.com/politics/supreme-court/supreme-court-will-take-challenge-obamacare-s-individual-mandate-n1146901",
+        title="Supreme Court will take up challenge to Obamacare's individual mandate")
+    db.session.add(vote)
+
     test_user = User(user_name='James_Su',
                      first_name='James',
                      last_name='Su',
@@ -53,6 +58,14 @@ def db_seed():
                      karma=8)
 
     db.session.add(test_user)
+
+    test_message = Message(user_from='Dean_Su',
+                     user_to='James_Su',
+                     contents='Hello World!',
+                     flag="Family")
+
+    db.session.add(test_message)
+
     db.session.commit()
     print('DB seeded!')
 
@@ -138,9 +151,24 @@ def create_post():
                     create_time=create_time, modify_time=modify_time)
         db.session.add(post)
         db.session.commit()
+        create_vote()
         return jsonify(message='Post created successfully!'), 201
     else:
         return jsonify(message='That user_name no exists.'), 409
+
+
+def create_vote():
+    # resource_url = request.form['resource_url']
+    title = request.form['title']
+    test = Vote.query.filter_by(title=title).first()
+    if test == None:
+        resource_url = request.form['resource_url']
+        # title = request.form['title']
+        create_time = get_pst_time()
+        modify_time = get_pst_time()
+        vote = Vote(title=title, resource_url=resource_url, create_time=create_time, modify_time=modify_time)
+        db.session.add(vote)
+        db.session.commit()
 
 
 @app.route('/delete_post/<int:id>', methods=['DELETE'])
@@ -180,6 +208,103 @@ def list_posts():
     result = posts_schema.dump(posts_list)
     return jsonify(result)
 
+
+@app.route('/up_vote_post', methods=['PUT'])
+def up_vote_post():
+    title = request.form['title']
+    vote = Vote.query.filter_by(title=title).first()
+    if vote:
+        vote.votes += 1
+        vote.up_votes += 1
+        vote.modify_time = get_pst_time()
+        db.session.commit()
+        return jsonify(message='Up vote successfully!'), 202
+    else:
+        return jsonify('Fail to vote!'), 404
+
+
+@app.route('/down_vote_post', methods=['PUT'])
+def down_vote_post():
+    # resource_url = request.form['resource_url']
+    title = request.form['title']
+    vote = Vote.query.filter_by(title=title).first()
+    if vote:
+        vote.votes -= 1
+        vote.down_votes += 1
+        vote.modify_time = get_pst_time()
+        db.session.commit()
+        return jsonify(message='Down vote successfully!'), 202
+    else:
+        return jsonify('Fail to vote!'), 404
+
+
+@app.route('/list_post_votes/<string:title>', methods=['GET'])
+def list_post_votes(title: str):
+    vote = Vote.query.filter_by(title=title)
+    if vote:
+        result = votes_schema.dump(vote)
+        return jsonify(result)
+    else:
+        return jsonify(message="That post does not exist"), 404
+
+
+@app.route('/list_n_post_votes/<int:n>', methods=['GET'])
+def list_n_post_votes(n: int):
+    vote = Vote.query.order_by(Vote.votes.desc()).limit(n)
+    if vote:
+        result = votes_schema.dump(vote)
+        return jsonify(result)
+    else:
+        return jsonify(message="That post votes does not exist"), 404
+
+
+@app.route('/list_post_votes_in_list/<string:titles>', methods=['GET'])
+def list_post_votes_in_list(titles: str):
+    votes_list = Vote.query.filter(Vote.title.in_(titles.split(','))).order_by(Vote.create_time.desc())
+    result = votes_schema.dump(votes_list)
+    return jsonify(result)
+
+
+@app.route('/send_message', methods=['POST'])
+def send_message():
+    user_to = request.form['user_to']
+    test = User.query.filter_by(user_name=user_to).first()
+    if test:
+        user_from = request.form['user_from']
+        user_to = request.form['user_to']
+        contents = request.form['contents']
+        flag = request.form['flag']
+        create_time = get_pst_time()
+
+        message = Message(user_from=user_from, user_to=user_to, contents=contents, flag=flag, create_time=create_time)
+        db.session.add(message)
+        db.session.commit()
+        return jsonify(message='Message sent successfully!'), 201
+    else:
+        return jsonify(message='Fail to send Message.'), 409
+
+
+@app.route('/delete_message/<int:id>', methods=['DELETE'])
+def delete_message(id: int):
+    message = Message.query.filter_by(id=id).first()
+    if message:
+        db.session.delete(message)
+        db.session.commit()
+        return jsonify(message="You deleted a message"), 202
+    else:
+        return jsonify(message="That message does not exist"), 404
+
+
+@app.route('/list_favorite_messages', methods=['GET'])
+def list_favorite_messages():
+    message = Message.query.filter_by(flag='Favorite')
+    if message:
+        result = messages_schema.dump(message)
+        return jsonify(result)
+    else:
+        return jsonify(message="Favorite messages does not exist"), 404
+
+
 # database models
 class User(db.Model):
     __tablename__ = 'tb_users'
@@ -200,12 +325,34 @@ class Post(db.Model):
     # user_id = Column(Integer, ForeignKey("tb_users.id"))
     # user_name = Column(String, ForeignKey("tb_users.user_name"))
     user_name = Column(String)
-    title = Column(String)
+    title = Column(String, ForeignKey("tb_votes.title"))
     text = Column(String)
     community = Column(String)
-    resource_url = Column(String)
+    resource_url = Column(String, ForeignKey("tb_votes.resource_url"))
     create_time = Column(DateTime, default=get_pst_time())
     modify_time = Column(DateTime, default=get_pst_time())
+
+
+class Vote(db.Model):
+    __tablename__ = 'tb_votes'
+    #id = Column(Integer, primary_key=True)
+    title = Column(String, primary_key=True)
+    resource_url = Column(String)
+    votes = Column(Integer, default=0)
+    up_votes = Column(Integer, default=0)
+    down_votes = Column(Integer, default=0)
+    create_time = Column(DateTime, default=get_pst_time())
+    modify_time = Column(DateTime, default=get_pst_time())
+
+
+class Message(db.Model):
+    __tablename__ = 'tb_messages'
+    id = Column(Integer, primary_key=True)
+    user_from = Column(String)
+    user_to = Column(String)
+    contents = Column(String)
+    flag = Column(String)
+    create_time = Column(DateTime, default=get_pst_time())
 
 
 class UserSchema(ma.Schema):
@@ -219,11 +366,27 @@ class PostSchema(ma.Schema):
         fields = ('id', 'user_name', 'title', 'text', 'community', 'resource_url', 'create_time', 'modify_time')
 
 
+class VoteSchema(ma.Schema):
+    class Meta:
+        fields = ('title', 'resource_url', 'votes', 'up_votes', 'down_votes', 'create_time', 'modify_time')
+
+
+class MessageSchema(ma.Schema):
+    class Meta:
+        fields = ('id', 'user_from', 'user_to', 'contents', 'flag', 'create_time')
+
+
 user_schema = UserSchema()
 users_schema = UserSchema(many=True)
 
 post_schema = PostSchema()
 posts_schema = PostSchema(many=True)
+
+vote_schema = VoteSchema()
+votes_schema = VoteSchema(many=True)
+
+message_schema = MessageSchema()
+messages_schema = MessageSchema(many=True)
 
 if __name__ == '__main__':
     app.run()
